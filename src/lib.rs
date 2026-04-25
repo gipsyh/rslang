@@ -1,14 +1,10 @@
+mod ast;
 mod error;
-mod ir;
-mod lower;
 mod slang;
-mod types;
 
+pub use ast::*;
 pub use error::{Error, Result};
-pub use ir::*;
-pub use lower::{lower_slang_ast, lower_slang_ast_str};
 pub use slang::Slang;
-pub use types::*;
 
 use std::path::Path;
 

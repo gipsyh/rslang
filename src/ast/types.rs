@@ -1,5 +1,7 @@
-use crate::error::{Error, Result};
-use crate::ir::{SourceLoc, SymbolRef};
+use super::json::{bool_field, kind, missing, opt_bool, opt_str, opt_string, str_field};
+use super::source::{SourceLoc, source_loc};
+use super::symbol::SymbolRef;
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -518,43 +520,4 @@ fn type_name(value: &Value) -> Option<String> {
     opt_str(value, "name")
         .filter(|name| !name.is_empty())
         .map(ToOwned::to_owned)
-}
-
-fn kind(value: &Value) -> Option<&str> {
-    opt_str(value, "kind")
-}
-
-fn str_field<'a>(value: &'a Value, field: &'static str, context: &str) -> Result<&'a str> {
-    opt_str(value, field).ok_or_else(|| missing(field, context))
-}
-
-fn opt_str<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
-    value.get(field).and_then(Value::as_str)
-}
-
-fn opt_string(value: &Value, field: &str) -> Option<String> {
-    opt_str(value, field).map(ToOwned::to_owned)
-}
-
-fn bool_field(value: &Value, field: &str) -> bool {
-    value.get(field).and_then(Value::as_bool).unwrap_or(false)
-}
-
-fn opt_bool(value: &Value, field: &str) -> Option<bool> {
-    value.get(field).and_then(Value::as_bool)
-}
-
-fn source_loc(value: &Value) -> Option<SourceLoc> {
-    Some(SourceLoc {
-        file: opt_str(value, "source_file")?.to_string(),
-        line: value.get("source_line")?.as_u64()?,
-        column: value.get("source_column")?.as_u64()?,
-    })
-}
-
-fn missing(field: &'static str, context: impl Into<String>) -> Error {
-    Error::MissingField {
-        field,
-        context: context.into(),
-    }
 }

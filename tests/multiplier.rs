@@ -4,7 +4,7 @@ use rslang::{
 };
 
 #[test]
-fn lowers_mul_design_into_rust_ir() {
+fn lowers_mul_design_into_rust_ast() {
     let design = rslang::parse_file("./tests/fvbench/multiplier/multiplier.sv")
         .expect("parse mul.sv with slang");
     let module = design.module("multiplier").expect("multiplier module");

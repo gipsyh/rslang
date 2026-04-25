@@ -1,6 +1,6 @@
+use crate::ast::Design;
 use crate::error::{Error, Result};
-use crate::ir::Design;
-use crate::lower::lower_slang_ast_str;
+use crate::lower_slang_ast_str;
 use serde_json::Value;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

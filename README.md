@@ -6,7 +6,7 @@ are easier to use in later semantic analysis passes.
 
 The library does not bind to slang's C++ ABI. Instead, it calls the system
 `slang` executable, asks it for AST JSON, and lowers that JSON into a compact
-Rust IR.
+Rust AST.
 
 ## What This Crate Does
 
@@ -16,7 +16,7 @@ Rust IR.
   `Port`, `Signal`, `ProcedureBlock`, `Stmt`, and `Expr`.
 - Keeps source locations when `--ast-json-source-info` is enabled.
 - Preserves unsupported nodes as `Unknown` variants so analysis can continue
-  while the IR grows.
+  while the AST grows.
 
 ## Requirements
 
@@ -63,7 +63,7 @@ let design = Slang::default()
     .parse_file("tests/fvbench/arbiter/arbiter.sv")?;
 ```
 
-`--disable-analysis` is useful for tests that only care about AST/IR lowering
+`--disable-analysis` is useful for tests that only care about AST lowering
 when slang's later analysis passes reject an assertion or property.
 
 ## Public API Map
@@ -75,9 +75,9 @@ when slang's later analysis passes reject an assertion or property.
 - `Slang::ast_json_for_file` returns raw slang AST JSON as `serde_json::Value`.
 - `lower_slang_ast` and `lower_slang_ast_str` lower raw AST JSON into `Design`.
 
-## IR Overview
+## AST Overview
 
-The IR is intentionally small and analysis-oriented:
+The AST is intentionally small and analysis-oriented:
 
 - `Design` contains top-level lowered modules.
 - `Module` contains parameters, ports, nets, variables, and procedural blocks.
@@ -102,7 +102,7 @@ more lowering support later.
    ```
 
 2. stdout is parsed as JSON.
-3. `src/lower.rs` walks the JSON and constructs the Rust IR from `src/ir.rs`.
+3. `src/ast/` walks the JSON and constructs the Rust AST.
 4. Errors are reported through `src/error.rs`.
 
 ## Tests
@@ -126,12 +126,12 @@ The test suite includes:
 
 ## Current Limitations
 
-- This is not a full SystemVerilog IR yet.
+- This is not a full SystemVerilog AST yet.
 - The lowering currently focuses on the constructs needed by the included
   examples.
 - Some slang AST nodes are represented as `Unknown`.
 - Nested instances, concurrent assertions, memories, selects, calls, and richer
-  property expressions may need more dedicated IR as analysis requirements grow.
+  property expressions may need more dedicated AST as analysis requirements grow.
 - The library expects system `slang` to be installed rather than vendoring it.
 
 ## Suggested Reading Order
@@ -140,8 +140,9 @@ For future maintainers or coding agents, read files in this order:
 
 1. `README.md` for the intent and pipeline.
 2. `src/lib.rs` for the public API.
-3. `src/ir.rs` for the data model.
-4. `src/slang.rs` for frontend invocation.
-5. `src/lower.rs` for AST JSON lowering.
-6. `tests/multiplier.rs` and `tests/fvbench.rs` for expected behavior.
-
+3. `src/ast/mod.rs` for the AST exports.
+4. `src/ast/types.rs`, `src/ast/module.rs`, `src/ast/statement.rs`, and
+   `src/ast/expr.rs` for node definitions and JSON lowering.
+5. `src/slang.rs` for frontend invocation.
+6. `src/lower.rs` for compatibility re-exports of the lowering entry points.
+7. `tests/multiplier.rs` and `tests/fvbench.rs` for expected behavior.
