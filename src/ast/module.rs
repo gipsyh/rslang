@@ -1,9 +1,9 @@
 use super::expr::Expr;
-use super::json::{array, expect_kind, opt_str, opt_string, str_field};
 use super::source::{SourceLoc, source_loc};
 use super::statement::{Stmt, lower_stmt};
 use super::symbol::SymbolRef;
 use super::types::{DataType, TypeDecl, lower_required_type, lower_type_decl};
+use super::utils::{array, expect_kind, opt_str, opt_string, str_field};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -93,7 +93,7 @@ pub enum ProcedureKind {
 pub(crate) fn lower_module_instance(value: &Value) -> Result<Module> {
     let body = value
         .get("body")
-        .ok_or_else(|| super::json::missing("body", "module instance"))?;
+        .ok_or_else(|| super::utils::missing("body", "module instance"))?;
     expect_kind(body, "InstanceBody")?;
 
     let mut module = Module {
@@ -108,7 +108,7 @@ pub(crate) fn lower_module_instance(value: &Value) -> Result<Module> {
     };
 
     for member in array(body, "members", "module body")? {
-        match super::json::kind(member) {
+        match super::utils::kind(member) {
             Some("EnumType") | Some("TypeAlias") => module.types.push(lower_type_decl(member)?),
             Some("Parameter") => module.parameters.push(lower_parameter(member)?),
             Some("Port") => module.ports.push(lower_port(member)?),
@@ -159,7 +159,7 @@ fn lower_signal(value: &Value, kind: SignalKind) -> Result<Signal> {
 fn lower_procedure(value: &Value) -> Result<ProcedureBlock> {
     let body = value
         .get("body")
-        .ok_or_else(|| super::json::missing("body", "procedural block"))?;
+        .ok_or_else(|| super::utils::missing("body", "procedural block"))?;
     Ok(ProcedureBlock {
         kind: lower_procedure_kind(opt_str(value, "procedureKind")),
         body: lower_stmt(body)?,

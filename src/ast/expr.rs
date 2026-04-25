@@ -1,7 +1,7 @@
-use super::json::{bool_field, kind, missing, opt_str, opt_string, str_field};
 use super::source::{SourceSpan, source_span};
 use super::symbol::SymbolRef;
 use super::types::{DataType, lower_optional_type};
+use super::utils::{bool_field, kind, missing, opt_str, opt_string, str_field};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

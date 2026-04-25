@@ -1,5 +1,5 @@
-use super::json::{array, expect_kind, kind, missing};
 use super::module::{Module, lower_module_instance};
+use super::utils::{array, expect_kind, kind, missing};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

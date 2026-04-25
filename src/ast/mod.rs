@@ -1,11 +1,11 @@
 mod design;
 mod expr;
-mod json;
 mod module;
 mod source;
 mod statement;
 mod symbol;
 mod types;
+mod utils;
 
 pub use design::{Design, lower_slang_ast, lower_slang_ast_str};
 pub use expr::{BinaryOp, Expr, UnaryOp};

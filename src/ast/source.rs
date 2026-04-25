@@ -1,4 +1,4 @@
-use super::json::opt_str;
+use super::utils::opt_str;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
