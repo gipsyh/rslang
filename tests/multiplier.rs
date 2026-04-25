@@ -1,11 +1,11 @@
-use slangrs::{
+use rslang::{
     AssertionKind, BinaryOp, Edge, EventControl, Expr, PortDirection, ProcedureKind, SignalKind,
     Stmt,
 };
 
 #[test]
 fn lowers_mul_design_into_rust_ir() {
-    let design = slangrs::parse_file("./tests/fvbench/multiplier/multiplier.sv")
+    let design = rslang::parse_file("./tests/fvbench/multiplier/multiplier.sv")
         .expect("parse mul.sv with slang");
     let module = design.module("multiplier").expect("multiplier module");
 
