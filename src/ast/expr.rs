@@ -1,7 +1,7 @@
 use super::source::{SourceSpan, source_span};
 use super::symbol::SymbolRef;
 use super::types::{DataType, lower_optional_type};
-use super::utils::{bool_field, kind, missing, opt_str, opt_string, str_field};
+use super::utils::{array, bool_field, kind, missing, opt_str, opt_string, str_field};
 use crate::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -35,6 +35,19 @@ pub enum Expr {
         constant: Option<String>,
         source: Option<SourceSpan>,
     },
+    Concatenation {
+        operands: Vec<Expr>,
+        ty: Option<DataType>,
+        constant: Option<String>,
+        source: Option<SourceSpan>,
+    },
+    Replication {
+        count: Box<Expr>,
+        concat: Box<Expr>,
+        ty: Option<DataType>,
+        constant: Option<String>,
+        source: Option<SourceSpan>,
+    },
     Conversion {
         ty: Option<DataType>,
         expr: Box<Expr>,
@@ -62,6 +75,8 @@ impl Expr {
             | Self::IntegerLiteral { source, .. }
             | Self::Unary { source, .. }
             | Self::Binary { source, .. }
+            | Self::Concatenation { source, .. }
+            | Self::Replication { source, .. }
             | Self::Conversion { source, .. }
             | Self::Assignment { source, .. }
             | Self::Unknown { source, .. } => source.as_ref(),
@@ -74,6 +89,8 @@ impl Expr {
             | Self::IntegerLiteral { ty, .. }
             | Self::Unary { ty, .. }
             | Self::Binary { ty, .. }
+            | Self::Concatenation { ty, .. }
+            | Self::Replication { ty, .. }
             | Self::Conversion { ty, .. }
             | Self::Assignment { ty, .. }
             | Self::Unknown { ty, .. } => ty.as_ref(),
@@ -164,6 +181,33 @@ pub(crate) fn lower_expr(value: &Value) -> Result<Expr> {
                 op: lower_binary_op(opt_str(value, "op")),
                 left: Box::new(lower_expr(left)?),
                 right: Box::new(lower_expr(right)?),
+                ty,
+                constant,
+                source,
+            })
+        }
+        "Concatenation" => {
+            let mut operands = Vec::new();
+            for operand in array(value, "operands", "concatenation expression")? {
+                operands.push(lower_expr(operand)?);
+            }
+            Ok(Expr::Concatenation {
+                operands,
+                ty,
+                constant,
+                source,
+            })
+        }
+        "Replication" => {
+            let count = value
+                .get("count")
+                .ok_or_else(|| missing("count", "replication expression"))?;
+            let concat = value
+                .get("concat")
+                .ok_or_else(|| missing("concat", "replication expression"))?;
+            Ok(Expr::Replication {
+                count: Box::new(lower_expr(count)?),
+                concat: Box::new(lower_expr(concat)?),
                 ty,
                 constant,
                 source,

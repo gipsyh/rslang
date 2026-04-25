@@ -44,6 +44,14 @@ pub enum Stmt {
         action: Option<Box<Stmt>>,
         source: Option<SourceSpan>,
     },
+    ConcurrentAssert {
+        kind: AssertionKind,
+        clock: Option<EventControl>,
+        disable_iff: Option<Expr>,
+        condition: Expr,
+        action: Option<Box<Stmt>>,
+        source: Option<SourceSpan>,
+    },
     Unknown {
         kind: String,
         source: Option<SourceSpan>,
@@ -60,6 +68,7 @@ impl Stmt {
             | Self::Assign { source, .. }
             | Self::Expr { source, .. }
             | Self::Assert { source, .. }
+            | Self::ConcurrentAssert { source, .. }
             | Self::Unknown { source, .. } => source.as_ref(),
         }
     }
@@ -83,7 +92,7 @@ impl Stmt {
                     else_branch.for_each(visit);
                 }
             }
-            Self::Assert { action, .. } => {
+            Self::Assert { action, .. } | Self::ConcurrentAssert { action, .. } => {
                 if let Some(action) = action {
                     action.for_each(visit);
                 }
@@ -104,6 +113,10 @@ pub enum AssertionKind {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventControl {
+    List {
+        events: Vec<EventControl>,
+        source: Option<SourceSpan>,
+    },
     Signal {
         edge: Edge,
         expr: Expr,
@@ -201,6 +214,7 @@ pub(crate) fn lower_stmt(value: &Value) -> Result<Stmt> {
                 source,
             })
         }
+        "ConcurrentAssertion" => lower_concurrent_assertion(value, source),
         _ => Ok(Stmt::Unknown {
             kind: node_kind.to_string(),
             source,
@@ -266,6 +280,13 @@ fn lower_assignment_stmt(value: &Value, source: Option<SourceSpan>) -> Result<St
 fn lower_event_control(value: &Value) -> Result<EventControl> {
     let source = source_span(value);
     match kind(value) {
+        Some("EventList") => {
+            let mut events = Vec::new();
+            for event in array(value, "events", "event list")? {
+                events.push(lower_event_control(event)?);
+            }
+            Ok(EventControl::List { events, source })
+        }
         Some("SignalEvent") => {
             let expr = value
                 .get("expr")
@@ -284,6 +305,64 @@ fn lower_event_control(value: &Value) -> Result<EventControl> {
             kind: "<missing>".to_string(),
             source,
         }),
+    }
+}
+
+fn lower_concurrent_assertion(value: &Value, source: Option<SourceSpan>) -> Result<Stmt> {
+    let property_spec = value
+        .get("propertySpec")
+        .ok_or_else(|| missing("propertySpec", "concurrent assertion"))?;
+    let mut clock = None;
+    let mut disable_iff = None;
+    let condition = lower_property_expr(property_spec, &mut clock, &mut disable_iff)?;
+    let action = value
+        .get("ifTrue")
+        .map(lower_stmt)
+        .transpose()?
+        .map(Box::new);
+
+    Ok(Stmt::ConcurrentAssert {
+        kind: lower_assertion_kind(opt_str(value, "assertionKind")),
+        clock,
+        disable_iff,
+        condition,
+        action,
+        source,
+    })
+}
+
+fn lower_property_expr(
+    value: &Value,
+    clock: &mut Option<EventControl>,
+    disable_iff: &mut Option<Expr>,
+) -> Result<Expr> {
+    match kind(value) {
+        Some("Clocking") => {
+            if let Some(clocking) = value.get("clocking") {
+                *clock = Some(lower_event_control(clocking)?);
+            }
+            let expr = value
+                .get("expr")
+                .ok_or_else(|| missing("expr", "clocking property expression"))?;
+            lower_property_expr(expr, clock, disable_iff)
+        }
+        Some("DisableIff") => {
+            let condition = value
+                .get("condition")
+                .ok_or_else(|| missing("condition", "disable iff property expression"))?;
+            *disable_iff = Some(lower_expr(condition)?);
+            let expr = value
+                .get("expr")
+                .ok_or_else(|| missing("expr", "disable iff property expression"))?;
+            lower_property_expr(expr, clock, disable_iff)
+        }
+        Some("Simple") => {
+            let expr = value
+                .get("expr")
+                .ok_or_else(|| missing("expr", "simple property expression"))?;
+            lower_expr(expr)
+        }
+        _ => lower_expr(value),
     }
 }
 
