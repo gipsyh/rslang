@@ -1,10 +1,11 @@
 use super::source::{SourceSpan, source_span};
 use super::symbol::SymbolRef;
 use super::types::{DataType, lower_optional_type};
-use super::utils::{array, bool_field, kind, missing, opt_str, opt_string, str_field};
-use crate::error::Result;
+use super::utils::{array, bool_field, kind, missing, opt_string, str_field};
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use strum::EnumString;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Expr {
@@ -98,36 +99,54 @@ impl Expr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, EnumString)]
 pub enum UnaryOp {
-    LogicalNot,
-    BitwiseNot,
     Plus,
     Minus,
-    Unknown(String),
+    BitwiseNot,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    BitwiseNand,
+    BitwiseNor,
+    BitwiseXnor,
+    LogicalNot,
+    Preincrement,
+    Predecrement,
+    Postincrement,
+    Postdecrement,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, EnumString)]
 pub enum BinaryOp {
     Add,
     Subtract,
     Multiply,
     Divide,
     Mod,
-    LogicalAnd,
-    LogicalOr,
-    BitwiseAnd,
-    BitwiseOr,
-    BitwiseXor,
+    BinaryAnd,
+    BinaryOr,
+    BinaryXor,
+    BinaryXnor,
     Equality,
     Inequality,
-    LessThan,
-    LessThanEqual,
-    GreaterThan,
+    CaseEquality,
+    CaseInequality,
     GreaterThanEqual,
-    ShiftLeft,
-    ShiftRight,
-    Unknown(String),
+    GreaterThan,
+    LessThanEqual,
+    LessThan,
+    WildcardEquality,
+    WildcardInequality,
+    LogicalAnd,
+    LogicalOr,
+    LogicalImplication,
+    LogicalEquivalence,
+    LogicalShiftLeft,
+    LogicalShiftRight,
+    ArithmeticShiftLeft,
+    ArithmeticShiftRight,
+    Power,
 }
 
 pub(crate) fn lower_expr(value: &Value) -> Result<Expr> {
@@ -163,7 +182,7 @@ pub(crate) fn lower_expr(value: &Value) -> Result<Expr> {
                 .get("operand")
                 .ok_or_else(|| missing("operand", "unary expression"))?;
             Ok(Expr::Unary {
-                op: lower_unary_op(opt_str(value, "op")),
+                op: lower_unary_op(str_field(value, "op", "unary expression")?)?,
                 expr: Box::new(lower_expr(operand)?),
                 ty,
                 constant,
@@ -178,7 +197,7 @@ pub(crate) fn lower_expr(value: &Value) -> Result<Expr> {
                 .get("right")
                 .ok_or_else(|| missing("right", "binary expression"))?;
             Ok(Expr::Binary {
-                op: lower_binary_op(opt_str(value, "op")),
+                op: lower_binary_op(str_field(value, "op", "binary expression")?)?,
                 left: Box::new(lower_expr(left)?),
                 right: Box::new(lower_expr(right)?),
                 ty,
@@ -247,38 +266,14 @@ pub(crate) fn lower_expr(value: &Value) -> Result<Expr> {
     }
 }
 
-fn lower_unary_op(value: Option<&str>) -> UnaryOp {
-    match value {
-        Some("LogicalNot") => UnaryOp::LogicalNot,
-        Some("BitwiseNot") => UnaryOp::BitwiseNot,
-        Some("Plus") => UnaryOp::Plus,
-        Some("Minus") => UnaryOp::Minus,
-        Some(other) => UnaryOp::Unknown(other.to_string()),
-        None => UnaryOp::Unknown("<missing>".to_string()),
-    }
+fn lower_unary_op(value: &str) -> Result<UnaryOp> {
+    value
+        .parse()
+        .map_err(|_| Error::Message(format!("unknown unary operator `{value}`")))
 }
 
-fn lower_binary_op(value: Option<&str>) -> BinaryOp {
-    match value {
-        Some("Add") => BinaryOp::Add,
-        Some("Subtract") => BinaryOp::Subtract,
-        Some("Multiply") => BinaryOp::Multiply,
-        Some("Divide") => BinaryOp::Divide,
-        Some("Mod") => BinaryOp::Mod,
-        Some("LogicalAnd") => BinaryOp::LogicalAnd,
-        Some("LogicalOr") => BinaryOp::LogicalOr,
-        Some("BinaryAnd") | Some("BitwiseAnd") => BinaryOp::BitwiseAnd,
-        Some("BinaryOr") | Some("BitwiseOr") => BinaryOp::BitwiseOr,
-        Some("BinaryXor") | Some("BitwiseXor") => BinaryOp::BitwiseXor,
-        Some("Equality") => BinaryOp::Equality,
-        Some("Inequality") => BinaryOp::Inequality,
-        Some("LessThan") => BinaryOp::LessThan,
-        Some("LessThanEqual") => BinaryOp::LessThanEqual,
-        Some("GreaterThan") => BinaryOp::GreaterThan,
-        Some("GreaterThanEqual") => BinaryOp::GreaterThanEqual,
-        Some("LogicalShiftLeft") | Some("ShiftLeft") => BinaryOp::ShiftLeft,
-        Some("LogicalShiftRight") | Some("ShiftRight") => BinaryOp::ShiftRight,
-        Some(other) => BinaryOp::Unknown(other.to_string()),
-        None => BinaryOp::Unknown("<missing>".to_string()),
-    }
+fn lower_binary_op(value: &str) -> Result<BinaryOp> {
+    value
+        .parse()
+        .map_err(|_| Error::Message(format!("unknown binary operator `{value}`")))
 }

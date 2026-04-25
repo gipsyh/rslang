@@ -105,5 +105,6 @@ fn contains_binary_op(expr: &Expr, needle: BinaryOp) -> bool {
             contains_binary_op(left, needle.clone()) || contains_binary_op(right, needle)
         }
         Expr::NamedValue { .. } | Expr::IntegerLiteral { .. } | Expr::Unknown { .. } => false,
+        _ => todo!(),
     }
 }
