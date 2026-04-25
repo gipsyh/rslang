@@ -40,6 +40,7 @@ fn lower_module_instance(value: &Value) -> Result<Module> {
     let mut module = Module {
         name: str_field(body, "name", "module body")?.to_string(),
         source: source_loc(body),
+        types: Vec::new(),
         parameters: Vec::new(),
         ports: Vec::new(),
         nets: Vec::new(),
@@ -49,6 +50,7 @@ fn lower_module_instance(value: &Value) -> Result<Module> {
 
     for member in array(body, "members", "module body")? {
         match kind(member) {
+            Some("EnumType") | Some("TypeAlias") => module.types.push(lower_type_decl(member)?),
             Some("Parameter") => module.parameters.push(lower_parameter(member)?),
             Some("Port") => module.ports.push(lower_port(member)?),
             Some("Net") => module.nets.push(lower_signal(member, SignalKind::Net)?),
@@ -63,10 +65,18 @@ fn lower_module_instance(value: &Value) -> Result<Module> {
     Ok(module)
 }
 
+fn lower_type_decl(value: &Value) -> Result<TypeDecl> {
+    Ok(TypeDecl {
+        name: str_field(value, "name", "type declaration")?.to_string(),
+        ty: lower_data_type(value)?,
+        source: source_loc(value),
+    })
+}
+
 fn lower_parameter(value: &Value) -> Result<Parameter> {
     Ok(Parameter {
         name: str_field(value, "name", "parameter")?.to_string(),
-        ty: opt_string(value, "type").unwrap_or_default(),
+        ty: lower_required_type(value, "parameter")?,
         value: opt_string(value, "value"),
         initializer: value.get("initializer").map(lower_expr).transpose()?,
         source: source_loc(value),
@@ -77,7 +87,7 @@ fn lower_port(value: &Value) -> Result<Port> {
     Ok(Port {
         name: str_field(value, "name", "port")?.to_string(),
         direction: lower_port_direction(opt_str(value, "direction")),
-        ty: opt_string(value, "type").unwrap_or_default(),
+        ty: lower_required_type(value, "port")?,
         internal_symbol: opt_str(value, "internalSymbol").map(SymbolRef::parse),
         source: source_loc(value),
     })
@@ -87,7 +97,7 @@ fn lower_signal(value: &Value, kind: SignalKind) -> Result<Signal> {
     Ok(Signal {
         name: str_field(value, "name", "signal")?.to_string(),
         kind,
-        ty: opt_string(value, "type").unwrap_or_default(),
+        ty: lower_required_type(value, "signal")?,
         source: source_loc(value),
     })
 }
@@ -238,7 +248,7 @@ fn lower_assignment_stmt(value: &Value, source: Option<SourceSpan>) -> Result<St
         left: lower_expr(left)?,
         right: lower_expr(right)?,
         nonblocking: bool_field(value, "isNonBlocking"),
-        ty: opt_string(value, "type"),
+        ty: lower_optional_type(value)?,
         source,
     })
 }
@@ -269,7 +279,7 @@ fn lower_event_control(value: &Value) -> Result<EventControl> {
 
 fn lower_expr(value: &Value) -> Result<Expr> {
     let source = source_span(value);
-    let ty = opt_string(value, "type");
+    let ty = lower_optional_type(value)?;
     let constant = opt_string(value, "constant");
     let Some(kind) = kind(value) else {
         return Ok(Expr::Unknown {
@@ -355,6 +365,349 @@ fn lower_expr(value: &Value) -> Result<Expr> {
             source,
         }),
     }
+}
+
+fn lower_required_type(value: &Value, context: &str) -> Result<DataType> {
+    let ty = value.get("type").ok_or_else(|| missing("type", context))?;
+    lower_data_type(ty)
+}
+
+fn lower_optional_type(value: &Value) -> Result<Option<DataType>> {
+    value.get("type").map(lower_data_type).transpose()
+}
+
+fn lower_data_type(value: &Value) -> Result<DataType> {
+    if let Some(raw) = value.as_str() {
+        return Ok(parse_type_text(raw));
+    }
+
+    let Some(type_kind) = kind(value) else {
+        return Ok(DataType::Unknown {
+            kind: "<missing>".to_string(),
+            name: type_name(value),
+        });
+    };
+
+    match type_kind {
+        "ScalarType" => Ok(DataType::Scalar(ScalarType {
+            kind: lower_scalar_kind(opt_str(value, "name")),
+            signed: bool_field(value, "isSigned"),
+        })),
+        "PredefinedIntegerType" => {
+            let kind = lower_predefined_integer_kind(opt_str(value, "name"));
+            Ok(DataType::PredefinedInteger(PredefinedIntegerType {
+                signed: opt_bool(value, "isSigned").unwrap_or_else(|| kind.default_signed()),
+                kind,
+            }))
+        }
+        "FloatingType" => Ok(DataType::Floating(FloatingType {
+            kind: lower_floating_kind(opt_str(value, "name")),
+        })),
+        "PackedArrayType" => Ok(DataType::PackedArray {
+            element: Box::new(lower_type_field(value, "elementType", "packed array type")?),
+            range: lower_type_range(value, "range"),
+        }),
+        "FixedSizeUnpackedArrayType" => Ok(DataType::FixedSizeUnpackedArray {
+            element: Box::new(lower_type_field(
+                value,
+                "elementType",
+                "fixed size unpacked array type",
+            )?),
+            range: lower_type_range(value, "range"),
+        }),
+        "DynamicArrayType" => Ok(DataType::DynamicArray {
+            element: Box::new(lower_type_field(
+                value,
+                "elementType",
+                "dynamic array type",
+            )?),
+        }),
+        "DPIOpenArrayType" => Ok(DataType::DpiOpenArray {
+            element: Box::new(lower_type_field(
+                value,
+                "elementType",
+                "DPI open array type",
+            )?),
+            packed: bool_field(value, "isPacked"),
+        }),
+        "AssociativeArrayType" => Ok(DataType::AssociativeArray {
+            element: Box::new(lower_type_field(
+                value,
+                "elementType",
+                "associative array type",
+            )?),
+            index: value
+                .get("indexType")
+                .map(lower_data_type)
+                .transpose()?
+                .map(Box::new),
+        }),
+        "QueueType" => Ok(DataType::Queue {
+            element: Box::new(lower_type_field(value, "elementType", "queue type")?),
+            max_bound: value
+                .get("maxBound")
+                .and_then(Value::as_u64)
+                .and_then(|value| u32::try_from(value).ok()),
+        }),
+        "EnumType" => Ok(DataType::Enum {
+            name: type_name(value),
+            base: Box::new(
+                value
+                    .get("baseType")
+                    .map(lower_data_type)
+                    .transpose()?
+                    .unwrap_or_default(),
+            ),
+            values: lower_enum_values(value)?,
+        }),
+        "PackedStructType" => Ok(DataType::PackedStruct {
+            name: type_name(value),
+            signed: bool_field(value, "isSigned"),
+            fields: lower_type_fields(value)?,
+        }),
+        "UnpackedStructType" => Ok(DataType::UnpackedStruct {
+            name: type_name(value),
+            fields: lower_type_fields(value)?,
+        }),
+        "PackedUnionType" => Ok(DataType::PackedUnion {
+            name: type_name(value),
+            signed: bool_field(value, "isSigned"),
+            tagged: bool_field(value, "isTagged"),
+            fields: lower_type_fields(value)?,
+        }),
+        "UnpackedUnionType" => Ok(DataType::UnpackedUnion {
+            name: type_name(value),
+            tagged: bool_field(value, "isTagged"),
+            fields: lower_type_fields(value)?,
+        }),
+        "VoidType" => Ok(DataType::Void),
+        "NullType" => Ok(DataType::Null),
+        "CHandleType" => Ok(DataType::CHandle),
+        "StringType" => Ok(DataType::String),
+        "EventType" => Ok(DataType::Event),
+        "UnboundedType" => Ok(DataType::Unbounded),
+        "TypeRefType" => Ok(DataType::TypeRef),
+        "UntypedType" => Ok(DataType::Untyped),
+        "SequenceType" => Ok(DataType::Sequence),
+        "PropertyType" => Ok(DataType::Property),
+        "VirtualInterfaceType" => Ok(DataType::VirtualInterface {
+            name: type_name(value),
+            iface: opt_str(value, "iface")
+                .or_else(|| opt_str(value, "interface"))
+                .map(SymbolRef::parse),
+            modport: opt_str(value, "modport").map(SymbolRef::parse),
+            real_iface: bool_field(value, "isRealIface"),
+        }),
+        "TypeAlias" => Ok(DataType::Alias {
+            name: opt_string(value, "name").unwrap_or_default(),
+            target: opt_str(value, "target").map(SymbolRef::parse),
+        }),
+        "ErrorType" => Ok(DataType::Error),
+        other => Ok(DataType::Unknown {
+            kind: other.to_string(),
+            name: type_name(value),
+        }),
+    }
+}
+
+fn lower_type_field(value: &Value, field: &'static str, context: &str) -> Result<DataType> {
+    value
+        .get(field)
+        .map(lower_data_type)
+        .transpose()?
+        .ok_or_else(|| missing(field, context))
+}
+
+fn lower_enum_values(value: &Value) -> Result<Vec<EnumValue>> {
+    let Some(members) = value.get("members").and_then(Value::as_array) else {
+        return Ok(Vec::new());
+    };
+
+    let mut values = Vec::new();
+    for member in members {
+        if kind(member) == Some("EnumValue") {
+            values.push(EnumValue {
+                name: str_field(member, "name", "enum value")?.to_string(),
+                value: opt_string(member, "value"),
+                source: source_loc(member),
+            });
+        }
+    }
+    Ok(values)
+}
+
+fn lower_type_fields(value: &Value) -> Result<Vec<TypeField>> {
+    let members = value
+        .get("members")
+        .or_else(|| value.get("fields"))
+        .and_then(Value::as_array);
+    let Some(members) = members else {
+        return Ok(Vec::new());
+    };
+
+    let mut fields = Vec::new();
+    for member in members {
+        if kind(member) == Some("Field") || member.get("type").is_some() {
+            fields.push(TypeField {
+                name: str_field(member, "name", "type field")?.to_string(),
+                ty: lower_required_type(member, "type field")?,
+                source: source_loc(member),
+            });
+        }
+    }
+    Ok(fields)
+}
+
+fn lower_scalar_kind(value: Option<&str>) -> ScalarKind {
+    match value {
+        Some("bit") | Some("Bit") => ScalarKind::Bit,
+        Some("logic") | Some("Logic") => ScalarKind::Logic,
+        Some("reg") | Some("Reg") => ScalarKind::Reg,
+        Some(other) => ScalarKind::Unknown(other.to_string()),
+        None => ScalarKind::Unknown("<missing>".to_string()),
+    }
+}
+
+fn lower_predefined_integer_kind(value: Option<&str>) -> PredefinedIntegerKind {
+    match value {
+        Some("shortint") | Some("ShortInt") => PredefinedIntegerKind::ShortInt,
+        Some("int") | Some("Int") => PredefinedIntegerKind::Int,
+        Some("longint") | Some("LongInt") => PredefinedIntegerKind::LongInt,
+        Some("byte") | Some("Byte") => PredefinedIntegerKind::Byte,
+        Some("integer") | Some("Integer") => PredefinedIntegerKind::Integer,
+        Some("time") | Some("Time") => PredefinedIntegerKind::Time,
+        Some(other) => PredefinedIntegerKind::Unknown(other.to_string()),
+        None => PredefinedIntegerKind::Unknown("<missing>".to_string()),
+    }
+}
+
+fn lower_floating_kind(value: Option<&str>) -> FloatingKind {
+    match value {
+        Some("real") | Some("Real") => FloatingKind::Real,
+        Some("shortreal") | Some("ShortReal") => FloatingKind::ShortReal,
+        Some("realtime") | Some("RealTime") => FloatingKind::RealTime,
+        Some(other) => FloatingKind::Unknown(other.to_string()),
+        None => FloatingKind::Unknown("<missing>".to_string()),
+    }
+}
+
+fn lower_type_range(value: &Value, field: &str) -> TypeRange {
+    opt_str(value, field)
+        .map(parse_type_range)
+        .unwrap_or_else(|| TypeRange::Unknown("<missing>".to_string()))
+}
+
+fn parse_type_range(raw: &str) -> TypeRange {
+    let trimmed = raw.trim();
+    let Some(body) = trimmed
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+    else {
+        return TypeRange::Unknown(trimmed.to_string());
+    };
+
+    let Some((left, right)) = body.split_once(':') else {
+        return TypeRange::Unknown(trimmed.to_string());
+    };
+
+    match (left.trim().parse(), right.trim().parse()) {
+        (Ok(left), Ok(right)) => TypeRange::Range { left, right },
+        _ => TypeRange::Unknown(trimmed.to_string()),
+    }
+}
+
+fn parse_type_text(raw: &str) -> DataType {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return DataType::default();
+    }
+
+    let mut base = raw;
+    let mut ranges = Vec::new();
+    while let Some(prefix) = base.strip_suffix(']') {
+        let Some(start) = prefix.rfind('[') else {
+            break;
+        };
+        ranges.push(parse_type_range(&base[start..]));
+        base = prefix[..start].trim_end();
+    }
+
+    let mut signed = None;
+    let mut base_parts = Vec::new();
+    for part in base.split_whitespace() {
+        match part {
+            "signed" => signed = Some(true),
+            "unsigned" => signed = Some(false),
+            other => base_parts.push(other),
+        }
+    }
+    let base = base_parts.join(" ");
+
+    let mut ty = match base.as_str() {
+        "bit" => DataType::Scalar(ScalarType {
+            kind: ScalarKind::Bit,
+            signed: signed.unwrap_or(false),
+        }),
+        "logic" => DataType::Scalar(ScalarType {
+            kind: ScalarKind::Logic,
+            signed: signed.unwrap_or(false),
+        }),
+        "reg" => DataType::Scalar(ScalarType {
+            kind: ScalarKind::Reg,
+            signed: signed.unwrap_or(false),
+        }),
+        "shortint" => predefined_integer_type(PredefinedIntegerKind::ShortInt, signed),
+        "int" => predefined_integer_type(PredefinedIntegerKind::Int, signed),
+        "longint" => predefined_integer_type(PredefinedIntegerKind::LongInt, signed),
+        "byte" => predefined_integer_type(PredefinedIntegerKind::Byte, signed),
+        "integer" => predefined_integer_type(PredefinedIntegerKind::Integer, signed),
+        "time" => predefined_integer_type(PredefinedIntegerKind::Time, signed),
+        "real" => DataType::Floating(FloatingType {
+            kind: FloatingKind::Real,
+        }),
+        "shortreal" => DataType::Floating(FloatingType {
+            kind: FloatingKind::ShortReal,
+        }),
+        "realtime" => DataType::Floating(FloatingType {
+            kind: FloatingKind::RealTime,
+        }),
+        "void" => DataType::Void,
+        "null" => DataType::Null,
+        "chandle" => DataType::CHandle,
+        "string" => DataType::String,
+        "event" => DataType::Event,
+        "$" => DataType::Unbounded,
+        "type reference" => DataType::TypeRef,
+        "untyped" => DataType::Untyped,
+        "sequence" => DataType::Sequence,
+        "property" => DataType::Property,
+        _ => DataType::Unknown {
+            kind: "StringType".to_string(),
+            name: Some(raw.to_string()),
+        },
+    };
+
+    for range in ranges.into_iter().rev() {
+        ty = DataType::PackedArray {
+            element: Box::new(ty),
+            range,
+        };
+    }
+
+    ty
+}
+
+fn predefined_integer_type(kind: PredefinedIntegerKind, signed: Option<bool>) -> DataType {
+    DataType::PredefinedInteger(PredefinedIntegerType {
+        signed: signed.unwrap_or_else(|| kind.default_signed()),
+        kind,
+    })
+}
+
+fn type_name(value: &Value) -> Option<String> {
+    opt_str(value, "name")
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn lower_port_direction(value: Option<&str>) -> PortDirection {
@@ -463,6 +816,10 @@ fn opt_string(value: &Value, field: &str) -> Option<String> {
 
 fn bool_field(value: &Value, field: &str) -> bool {
     value.get(field).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn opt_bool(value: &Value, field: &str) -> Option<bool> {
+    value.get(field).and_then(Value::as_bool)
 }
 
 fn array<'a>(value: &'a Value, field: &'static str, context: &str) -> Result<&'a [Value]> {

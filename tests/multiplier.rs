@@ -1,6 +1,6 @@
 use rslang::{
-    AssertionKind, BinaryOp, Edge, EventControl, Expr, PortDirection, ProcedureKind, SignalKind,
-    Stmt,
+    AssertionKind, BinaryOp, DataType, Edge, EventControl, Expr, PortDirection, ProcedureKind,
+    ScalarKind, SignalKind, Stmt, TypeRange,
 };
 
 #[test]
@@ -17,7 +17,14 @@ fn lowers_mul_design_into_rust_ir() {
 
     assert_eq!(module.ports.len(), 6);
     assert_eq!(module.port("clk").unwrap().direction, PortDirection::In);
-    assert_eq!(module.port("ix").unwrap().ty, "logic[7:0]");
+    let DataType::PackedArray { element, range } = &module.port("ix").unwrap().ty else {
+        panic!("ix should have a packed array type");
+    };
+    assert_eq!(*range, TypeRange::Range { left: 7, right: 0 });
+    assert!(matches!(
+        element.as_ref(),
+        DataType::Scalar(scalar) if scalar.kind == ScalarKind::Logic && !scalar.signed
+    ));
     assert_eq!(module.nets.len(), 6);
 
     let variable_names: Vec<_> = module

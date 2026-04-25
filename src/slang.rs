@@ -11,6 +11,7 @@ pub struct Slang {
     executable: PathBuf,
     extra_args: Vec<OsString>,
     include_source_info: bool,
+    include_detailed_type_info: bool,
 }
 
 impl Default for Slang {
@@ -19,6 +20,7 @@ impl Default for Slang {
             executable: PathBuf::from("slang"),
             extra_args: Vec::new(),
             include_source_info: true,
+            include_detailed_type_info: true,
         }
     }
 }
@@ -46,6 +48,11 @@ impl Slang {
         self
     }
 
+    pub fn include_detailed_type_info(mut self, include_detailed_type_info: bool) -> Self {
+        self.include_detailed_type_info = include_detailed_type_info;
+        self
+    }
+
     pub fn ast_json_for_file(&self, path: impl AsRef<Path>) -> Result<Value> {
         self.ast_json_for_files(&[path])
     }
@@ -69,6 +76,9 @@ impl Slang {
         command.arg("--quiet").arg("--ast-json").arg("-");
         if self.include_source_info {
             command.arg("--ast-json-source-info");
+        }
+        if self.include_detailed_type_info {
+            command.arg("--ast-json-detailed-types");
         }
         command.args(&self.extra_args);
         for path in paths {

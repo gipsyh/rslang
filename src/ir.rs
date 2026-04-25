@@ -15,6 +15,7 @@ impl Design {
 pub struct Module {
     pub name: String,
     pub source: Option<SourceLoc>,
+    pub types: Vec<TypeDecl>,
     pub parameters: Vec<Parameter>,
     pub ports: Vec<Port>,
     pub nets: Vec<Signal>,
@@ -29,6 +30,10 @@ impl Module {
 
     pub fn variable(&self, name: &str) -> Option<&Signal> {
         self.variables.iter().find(|variable| variable.name == name)
+    }
+
+    pub fn type_decl(&self, name: &str) -> Option<&TypeDecl> {
+        self.types.iter().find(|ty| ty.name == name)
     }
 }
 
@@ -49,9 +54,175 @@ pub struct SourceSpan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeDecl {
+    pub name: String,
+    pub ty: DataType,
+    pub source: Option<SourceLoc>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DataType {
+    Scalar(ScalarType),
+    PredefinedInteger(PredefinedIntegerType),
+    Floating(FloatingType),
+    PackedArray {
+        element: Box<DataType>,
+        range: TypeRange,
+    },
+    FixedSizeUnpackedArray {
+        element: Box<DataType>,
+        range: TypeRange,
+    },
+    DynamicArray {
+        element: Box<DataType>,
+    },
+    DpiOpenArray {
+        element: Box<DataType>,
+        packed: bool,
+    },
+    AssociativeArray {
+        element: Box<DataType>,
+        index: Option<Box<DataType>>,
+    },
+    Queue {
+        element: Box<DataType>,
+        max_bound: Option<u32>,
+    },
+    Enum {
+        name: Option<String>,
+        base: Box<DataType>,
+        values: Vec<EnumValue>,
+    },
+    PackedStruct {
+        name: Option<String>,
+        signed: bool,
+        fields: Vec<TypeField>,
+    },
+    UnpackedStruct {
+        name: Option<String>,
+        fields: Vec<TypeField>,
+    },
+    PackedUnion {
+        name: Option<String>,
+        signed: bool,
+        tagged: bool,
+        fields: Vec<TypeField>,
+    },
+    UnpackedUnion {
+        name: Option<String>,
+        tagged: bool,
+        fields: Vec<TypeField>,
+    },
+    Void,
+    Null,
+    CHandle,
+    String,
+    Event,
+    Unbounded,
+    TypeRef,
+    Untyped,
+    Sequence,
+    Property,
+    VirtualInterface {
+        name: Option<String>,
+        iface: Option<SymbolRef>,
+        modport: Option<SymbolRef>,
+        real_iface: bool,
+    },
+    Alias {
+        name: String,
+        target: Option<SymbolRef>,
+    },
+    Error,
+    Unknown {
+        kind: String,
+        name: Option<String>,
+    },
+}
+
+impl Default for DataType {
+    fn default() -> Self {
+        Self::Unknown {
+            kind: "<missing>".to_string(),
+            name: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScalarType {
+    pub kind: ScalarKind,
+    pub signed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScalarKind {
+    Bit,
+    Logic,
+    Reg,
+    Unknown(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PredefinedIntegerType {
+    pub kind: PredefinedIntegerKind,
+    pub signed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PredefinedIntegerKind {
+    ShortInt,
+    Int,
+    LongInt,
+    Byte,
+    Integer,
+    Time,
+    Unknown(String),
+}
+
+impl PredefinedIntegerKind {
+    pub fn default_signed(&self) -> bool {
+        !matches!(self, Self::Time | Self::Unknown(_))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FloatingType {
+    pub kind: FloatingKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FloatingKind {
+    Real,
+    ShortReal,
+    RealTime,
+    Unknown(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TypeRange {
+    Range { left: i64, right: i64 },
+    Unknown(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumValue {
+    pub name: String,
+    pub value: Option<String>,
+    pub source: Option<SourceLoc>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeField {
+    pub name: String,
+    pub ty: DataType,
+    pub source: Option<SourceLoc>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Parameter {
     pub name: String,
-    pub ty: String,
+    pub ty: DataType,
     pub value: Option<String>,
     pub initializer: Option<Expr>,
     pub source: Option<SourceLoc>,
@@ -61,7 +232,7 @@ pub struct Parameter {
 pub struct Port {
     pub name: String,
     pub direction: PortDirection,
-    pub ty: String,
+    pub ty: DataType,
     pub internal_symbol: Option<SymbolRef>,
     pub source: Option<SourceLoc>,
 }
@@ -79,7 +250,7 @@ pub enum PortDirection {
 pub struct Signal {
     pub name: String,
     pub kind: SignalKind,
-    pub ty: String,
+    pub ty: DataType,
     pub source: Option<SourceLoc>,
 }
 
@@ -129,7 +300,7 @@ pub enum Stmt {
         left: Expr,
         right: Expr,
         nonblocking: bool,
-        ty: Option<String>,
+        ty: Option<DataType>,
         source: Option<SourceSpan>,
     },
     Expr {
@@ -225,20 +396,20 @@ pub enum Edge {
 pub enum Expr {
     NamedValue {
         symbol: SymbolRef,
-        ty: Option<String>,
+        ty: Option<DataType>,
         constant: Option<String>,
         source: Option<SourceSpan>,
     },
     IntegerLiteral {
         value: String,
-        ty: Option<String>,
+        ty: Option<DataType>,
         constant: Option<String>,
         source: Option<SourceSpan>,
     },
     Unary {
         op: UnaryOp,
         expr: Box<Expr>,
-        ty: Option<String>,
+        ty: Option<DataType>,
         constant: Option<String>,
         source: Option<SourceSpan>,
     },
@@ -246,12 +417,12 @@ pub enum Expr {
         op: BinaryOp,
         left: Box<Expr>,
         right: Box<Expr>,
-        ty: Option<String>,
+        ty: Option<DataType>,
         constant: Option<String>,
         source: Option<SourceSpan>,
     },
     Conversion {
-        ty: Option<String>,
+        ty: Option<DataType>,
         expr: Box<Expr>,
         constant: Option<String>,
         source: Option<SourceSpan>,
@@ -260,12 +431,12 @@ pub enum Expr {
         left: Box<Expr>,
         right: Box<Expr>,
         nonblocking: bool,
-        ty: Option<String>,
+        ty: Option<DataType>,
         source: Option<SourceSpan>,
     },
     Unknown {
         kind: String,
-        ty: Option<String>,
+        ty: Option<DataType>,
         source: Option<SourceSpan>,
     },
 }
@@ -283,7 +454,7 @@ impl Expr {
         }
     }
 
-    pub fn ty(&self) -> Option<&str> {
+    pub fn ty(&self) -> Option<&DataType> {
         match self {
             Self::NamedValue { ty, .. }
             | Self::IntegerLiteral { ty, .. }
@@ -291,7 +462,7 @@ impl Expr {
             | Self::Binary { ty, .. }
             | Self::Conversion { ty, .. }
             | Self::Assignment { ty, .. }
-            | Self::Unknown { ty, .. } => ty.as_deref(),
+            | Self::Unknown { ty, .. } => ty.as_ref(),
         }
     }
 }

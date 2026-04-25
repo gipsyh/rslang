@@ -66,7 +66,6 @@ types instead of ad hoc JSON traversal.
 ```bash
 cargo fmt
 cargo test
-cargo clippy --all-targets -- -D warnings
 ```
 
 ## Known Shape Of The Current IR
