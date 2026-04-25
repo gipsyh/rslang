@@ -1,0 +1,3 @@
+[submodule "tests/fvbench"]
+	path = tests/fvbench
+	url = https://github.com/gipsyh/fvbench.git
